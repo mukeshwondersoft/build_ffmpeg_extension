@@ -6,7 +6,7 @@ on:
 jobs:
   build-ffmpeg:
     runs-on: ubuntu-latest
-    name: Build FFmpeg .so for Android
+    name: Build FFmpeg .so and headers for Android
 
     env:
       ANDROID_NDK_VERSION: r26d
@@ -38,24 +38,26 @@ jobs:
         run: |
           set -eux
 
-          FFMPEG_MODULE_PATH="$GITHUB_WORKSPACE/ffmpeg"
+          FFMPEG_PATH="$GITHUB_WORKSPACE/ffmpeg"
           NDK_PATH="$HOME/android-ndk"
           HOST_PLATFORM=linux-x86_64
           ENABLED_DECODERS=(${DECODE_LIST//,/ })
 
-          cd $FFMPEG_MODULE_PATH
-          mkdir -p android-libs
+          cd "$FFMPEG_PATH"
+          mkdir -p android-output
 
           build_arch() {
             ABI=$1
             ARCH=$2
             CPU=$3
             CROSS_PREFIX=$4
-            LIBDIR=$5
-            EXTRA_CFLAGS=$6
-            EXTRA_LDFLAGS=$7
-            DISABLE_ASM=$8
-            API_LEVEL=$9
+            EXTRA_CFLAGS=$5
+            EXTRA_LDFLAGS=$6
+            DISABLE_ASM=$7
+            API_LEVEL=$8
+
+            OUTPUT_DIR=$FFMPEG_PATH/android-output/$ABI
+            mkdir -p $OUTPUT_DIR
 
             COMMON_OPTIONS="
               --target-os=android
@@ -74,31 +76,32 @@ jobs:
               --extra-ldexeflags=-pie
               --disable-v4l2-m2m
               --disable-vulkan
-              ${DISABLE_ASM}
+              $DISABLE_ASM
             "
 
             for decoder in "${ENABLED_DECODERS[@]}"; do
-              COMMON_OPTIONS="${COMMON_OPTIONS} --enable-decoder=${decoder}"
+              COMMON_OPTIONS+=" --enable-decoder=${decoder}"
             done
 
             TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/${HOST_PLATFORM}/bin"
             export PATH=$TOOLCHAIN:$PATH
 
             ./configure \
-              --libdir=${LIBDIR} \
-              --prefix=${LIBDIR} \
-              --arch=${ARCH} \
-              --cpu=${CPU} \
-              --cross-prefix="${TOOLCHAIN}/${CROSS_PREFIX}" \
-              --nm="${TOOLCHAIN}/llvm-nm" \
-              --ar="${TOOLCHAIN}/llvm-ar" \
-              --ranlib="${TOOLCHAIN}/llvm-ranlib" \
-              --strip="${TOOLCHAIN}/llvm-strip" \
-              --cc="${TOOLCHAIN}/${CROSS_PREFIX}clang" \
-              --cxx="${TOOLCHAIN}/${CROSS_PREFIX}clang++" \
-              --extra-cflags="${EXTRA_CFLAGS} -fPIC -D__ANDROID_API__=${API_LEVEL}" \
-              --extra-ldflags="${EXTRA_LDFLAGS}" \
-              ${COMMON_OPTIONS}
+              --prefix=$OUTPUT_DIR \
+              --libdir=$OUTPUT_DIR/lib \
+              --incdir=$OUTPUT_DIR/include \
+              --arch=$ARCH \
+              --cpu=$CPU \
+              --cross-prefix="$TOOLCHAIN/$CROSS_PREFIX" \
+              --nm="$TOOLCHAIN/llvm-nm" \
+              --ar="$TOOLCHAIN/llvm-ar" \
+              --ranlib="$TOOLCHAIN/llvm-ranlib" \
+              --strip="$TOOLCHAIN/llvm-strip" \
+              --cc="$TOOLCHAIN/${CROSS_PREFIX}clang" \
+              --cxx="$TOOLCHAIN/${CROSS_PREFIX}clang++" \
+              --extra-cflags="$EXTRA_CFLAGS -fPIC -D__ANDROID_API__=$API_LEVEL" \
+              --extra-ldflags="$EXTRA_LDFLAGS" \
+              $COMMON_OPTIONS
 
             make -j$(nproc)
             make install-libs
@@ -106,30 +109,20 @@ jobs:
             make clean
           }
 
-          # ARMv7
-          build_arch "armeabi-v7a" "arm" "armv7-a" "armv7a-linux-androideabi21-" "android-libs/armeabi-v7a" \
+          build_arch "armeabi-v7a" "arm" "armv7-a" "armv7a-linux-androideabi21-" \
             "-march=armv7-a -mfloat-abi=softfp" "-Wl,--fix-cortex-a8" "" 21
 
-          # ARM64
-          build_arch "arm64-v8a" "aarch64" "armv8-a" "aarch64-linux-android21-" "android-libs/arm64-v8a" \
+          build_arch "arm64-v8a" "aarch64" "armv8-a" "aarch64-linux-android21-" \
             "" "" "" 21
 
-          # x86
-          build_arch "x86" "x86" "i686" "i686-linux-android21-" "android-libs/x86" \
+          build_arch "x86" "x86" "i686" "i686-linux-android21-" \
             "" "" "--disable-asm" 21
 
-          # x86_64
-          build_arch "x86_64" "x86_64" "x86-64" "x86_64-linux-android21-" "android-libs/x86_64" \
+          build_arch "x86_64" "x86_64" "x86-64" "x86_64-linux-android21-" \
             "" "" "--disable-asm" 21
 
-      - name: Upload FFmpeg .so Libraries
+      - name: Upload All FFmpeg Outputs (libs + headers)
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-android-libs
-          path: ffmpeg/android-libs/**/lib/
-
-      - name: Upload FFmpeg Headers
-        uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-headers
-          path: ffmpeg/android-libs/armeabi-v7a/include/
+          name: ffmpeg-android-full
+          path: ffmpeg/android-output/
