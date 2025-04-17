@@ -1,9 +1,8 @@
-name: Build FFmpeg and libyuv for Android
+name: Build Static FFmpeg & libyuv for Android
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -11,56 +10,150 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      ANDROID_ABI: 21
+      ANDROID_ABI_LEVEL: 21
       HOST_PLATFORM: linux-x86_64
+      FFMPEG_VERSION: 6.1.1
+      ENABLED_DECODERS: "aac h264 hevc"
+      ABI_LIST: "armeabi-v7a arm64-v8a x86 x86_64"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake yasm pkg-config
+          sudo apt-get install -y cmake yasm pkg-config curl tar build-essential
 
       - name: Set up Android NDK
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r25c
 
-      - name: Set environment variables
+      - name: Download FFmpeg
         run: |
-          echo "NDK_PATH=${ANDROID_NDK_HOME}" >> $GITHUB_ENV
-          echo "FFMPEG_MODULE_PATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+          mkdir -p jni/ffmpeg
+          cd jni/ffmpeg
+          curl -L https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -o ffmpeg.tar.bz2
+          tar -xjf ffmpeg.tar.bz2 --strip-components=1
 
-      - name: Download FFmpeg source
+      - name: Download libyuv
         run: |
-          git clone https://git.ffmpeg.org/ffmpeg.git ${GITHUB_WORKSPACE}/jni/ffmpeg
-          cd ${GITHUB_WORKSPACE}/jni/ffmpeg
-          git checkout release/5.1  # or another version as needed
+          mkdir -p jni
+          git clone https://chromium.googlesource.com/libyuv/libyuv jni/libyuv
 
-      - name: Download libyuv source
+      - name: Build FFmpeg for all ABIs
         run: |
-          mkdir -p ${GITHUB_WORKSPACE}/jni
-          git clone https://chromium.googlesource.com/libyuv/libyuv ${GITHUB_WORKSPACE}/jni/libyuv
-          cd ${GITHUB_WORKSPACE}/jni/libyuv
-          git checkout main
+          set -eux
+          NDK_PATH=$ANDROID_NDK_HOME
+          TOOLCHAIN=${NDK_PATH}/toolchains/llvm/prebuilt/${HOST_PLATFORM}/bin
+          cd jni/ffmpeg
 
-      - name: Make build scripts executable
+          for ABI in $ABI_LIST; do
+            case $ABI in
+              armeabi-v7a)
+                ARCH=arm
+                CPU=armv7-a
+                TARGET=armv7a-linux-androideabi
+                API=$ANDROID_ABI_LEVEL
+                EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp"
+                EXTRA_LDFLAGS="-Wl,--fix-cortex-a8"
+                ;;
+              arm64-v8a)
+                ARCH=aarch64
+                CPU=armv8-a
+                TARGET=aarch64-linux-android
+                API=$ANDROID_ABI_LEVEL
+                EXTRA_CFLAGS=""
+                EXTRA_LDFLAGS=""
+                ;;
+              x86)
+                ARCH=x86
+                CPU=i686
+                TARGET=i686-linux-android
+                API=$ANDROID_ABI_LEVEL
+                EXTRA_CFLAGS=""
+                EXTRA_LDFLAGS=""
+                ;;
+              x86_64)
+                ARCH=x86_64
+                CPU=x86-64
+                TARGET=x86_64-linux-android
+                API=$ANDROID_ABI_LEVEL
+                EXTRA_CFLAGS=""
+                EXTRA_LDFLAGS=""
+                ;;
+            esac
+
+            OUTPUT_DIR=$PWD/android-libs/$ABI
+            mkdir -p $OUTPUT_DIR/lib $OUTPUT_DIR/include
+
+            ./configure \
+              --prefix=$OUTPUT_DIR \
+              --target-os=android \
+              --arch=$ARCH \
+              --cpu=$CPU \
+              --cross-prefix=${TOOLCHAIN}/${TARGET}${API}- \
+              --cc=${TOOLCHAIN}/${TARGET}${API}-clang \
+              --nm=${TOOLCHAIN}/llvm-nm \
+              --ar=${TOOLCHAIN}/llvm-ar \
+              --ranlib=${TOOLCHAIN}/llvm-ranlib \
+              --strip=${TOOLCHAIN}/llvm-strip \
+              --enable-cross-compile \
+              --enable-static \
+              --disable-shared \
+              --disable-doc \
+              --disable-programs \
+              --disable-everything \
+              --enable-avformat \
+              --enable-swresample \
+              --enable-swscale \
+              --disable-avdevice \
+              --disable-postproc \
+              --disable-avfilter \
+              --disable-symver \
+              $(for dec in $ENABLED_DECODERS; do echo "--enable-decoder=$dec"; done) \
+              --extra-cflags="$EXTRA_CFLAGS" \
+              --extra-ldflags="$EXTRA_LDFLAGS"
+
+            make -j$(nproc)
+            make install
+            make clean
+          done
+
+      - name: Build libyuv for all ABIs
         run: |
-          chmod +x ${GITHUB_WORKSPACE}/build_ffmpeg.sh
-          chmod +x ${GITHUB_WORKSPACE}/build_libyuv.sh
+          set -eux
+          NDK_PATH=$ANDROID_NDK_HOME
+          cd jni/libyuv
 
-      - name: Build FFmpeg
-        run: |
-          bash ${GITHUB_WORKSPACE}/build_ffmpeg.sh "$FFMPEG_MODULE_PATH" "$NDK_PATH" "$HOST_PLATFORM" "$ANDROID_ABI" aac h264 hevc
+          for ABI in $ABI_LIST; do
+            mkdir -p build-$ABI
+            cd build-$ABI
 
-      - name: Build libyuv
-        run: |
-          bash ${GITHUB_WORKSPACE}/build_libyuv.sh "$FFMPEG_MODULE_PATH" "$NDK_PATH" "$ANDROID_ABI"
+            cmake .. \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=android-$ANDROID_ABI_LEVEL \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DCMAKE_SYSTEM_NAME=Android \
+              -DCMAKE_ANDROID_STL_TYPE=c++_static
 
-      - name: Upload build artifacts
+            cmake --build . --target yuv -j$(nproc)
+
+            # Copy .a and headers to corresponding output directory
+            LIBS_DIR=../../ffmpeg/android-libs/$ABI
+            mkdir -p $LIBS_DIR/lib
+            mkdir -p $LIBS_DIR/include
+            cp libyuv.a $LIBS_DIR/lib/
+            cp -r ../include/* $LIBS_DIR/include/
+
+            cd ..
+          done
+
+      - name: Upload Static Artifacts (includes .a and headers)
         uses: actions/upload-artifact@v4
         with:
-          name: android-libs
-          path: android-libs/
+          name: android-static-libs
+          path: jni/ffmpeg/android-libs/
