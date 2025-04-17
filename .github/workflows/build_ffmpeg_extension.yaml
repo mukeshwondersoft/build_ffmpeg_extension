@@ -1,59 +1,128 @@
-name: Build FFmpeg Extension for Android
+name: Build FFmpeg Android
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 jobs:
-  build:
+  build-ffmpeg:
     runs-on: ubuntu-latest
-    
+    name: Build FFmpeg .so for Android
+
+    env:
+      ANDROID_NDK_VERSION: r26d
+      FFMPEG_VERSION: 6.1.1
+      DECODE_LIST: "h264,mpeg4"
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Set up JDK
-      uses: actions/setup-java@v3
-      with:
-        java-version: '11'
-        distribution: 'temurin'
-        
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v2
-      
-    - name: Download NDK
-      run: |
-        SDKMANAGER=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
-        $SDKMANAGER --install "ndk;25.2.9519653"
-        echo "NDK_PATH=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
-        
-    - name: Make script executable
-      run: chmod +x build_ffmpeg.sh
-      
-    - name: Run FFmpeg build script
-      run: |
-        # Define the decoders you want to enable
-        ENABLED_DECODERS=(
-          "mpeg4" "h263" "h264" "hevc" "vp8" "vp9" 
-          "aac" "mp3" "ac3" "eac3" "flac" "vorbis"
-          "wmv1" "wmv2" "wmv3" "mpeg1video" "mpeg2video"
-          "msmpeg4v1" "msmpeg4v2" "msmpeg4v3" "flv"
-        )
-        
-        ./build_ffmpeg.sh \
-          "$GITHUB_WORKSPACE" \
-          "$NDK_PATH" \
-          "linux-x86_64" \
-          "21" \
-          "${ENABLED_DECODERS[@]}"
-          
-    - name: Archive built libraries
-      uses: actions/upload-artifact@v3
-      with:
-        name: ffmpeg-libraries
-        path: |
-          */jni/ffmpeg/android-libs/armeabi-v7a/*.so
-          */jni/ffmpeg/android-libs/arm64-v8a/*.so
-          */jni/ffmpeg/android-libs/x86/*.so
-          */jni/ffmpeg/android-libs/x86_64/*.so
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yasm make pkg-config curl unzip git
+
+      - name: Download Android NDK
+        run: |
+          curl -L https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip -o ndk.zip
+          unzip ndk.zip
+          mv android-ndk-${ANDROID_NDK_VERSION} $HOME/android-ndk
+
+      - name: Download FFmpeg source
+        run: |
+          curl -L https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -o ffmpeg.tar.bz2
+          tar -xjf ffmpeg.tar.bz2
+          mv ffmpeg-${FFMPEG_VERSION} ffmpeg
+
+      - name: Build FFmpeg for Android
+        run: |
+          set -eux
+
+          FFMPEG_MODULE_PATH="$GITHUB_WORKSPACE/ffmpeg"
+          NDK_PATH="$HOME/android-ndk"
+          HOST_PLATFORM=linux-x86_64
+          ENABLED_DECODERS=(${DECODE_LIST//,/ })
+
+          cd $FFMPEG_MODULE_PATH
+          mkdir -p android-libs
+
+          build_arch() {
+            ABI=$1
+            ARCH=$2
+            CPU=$3
+            CROSS_PREFIX=$4
+            LIBDIR=$5
+            EXTRA_CFLAGS=$6
+            EXTRA_LDFLAGS=$7
+            DISABLE_ASM=$8
+            API_LEVEL=$9
+
+            COMMON_OPTIONS="
+              --target-os=android
+              --enable-static
+              --disable-shared
+              --disable-doc
+              --disable-programs
+              --disable-everything
+              --disable-avdevice
+              --disable-avformat
+              --disable-swscale
+              --disable-postproc
+              --disable-avfilter
+              --disable-symver
+              --enable-swresample
+              --extra-ldexeflags=-pie
+              --disable-v4l2-m2m
+              --disable-vulkan
+              ${DISABLE_ASM}
+            "
+
+            for decoder in "${ENABLED_DECODERS[@]}"; do
+              COMMON_OPTIONS="${COMMON_OPTIONS} --enable-decoder=${decoder}"
+            done
+
+            TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/${HOST_PLATFORM}/bin"
+            export PATH=$TOOLCHAIN:$PATH
+
+            ./configure \
+              --libdir=android-libs/${ABI} \
+              --prefix=android-libs/${ABI} \
+              --arch=${ARCH} \
+              --cpu=${CPU} \
+              --cross-prefix="${TOOLCHAIN}/${CROSS_PREFIX}" \
+              --nm="${TOOLCHAIN}/llvm-nm" \
+              --ar="${TOOLCHAIN}/llvm-ar" \
+              --ranlib="${TOOLCHAIN}/llvm-ranlib" \
+              --strip="${TOOLCHAIN}/llvm-strip" \
+              --cc="${TOOLCHAIN}/${CROSS_PREFIX}clang" \
+              --cxx="${TOOLCHAIN}/${CROSS_PREFIX}clang++" \
+              --extra-cflags="${EXTRA_CFLAGS} -fPIC -D__ANDROID_API__=${API_LEVEL}" \
+              --extra-ldflags="${EXTRA_LDFLAGS}" \
+              ${COMMON_OPTIONS}
+
+            make -j$(nproc)
+            make install-libs
+            make clean
+          }
+
+          # ARMv7
+          build_arch "armeabi-v7a" "arm" "armv7-a" "armv7a-linux-androideabi21-" "android-libs/armeabi-v7a" \
+            "-march=armv7-a -mfloat-abi=softfp" "-Wl,--fix-cortex-a8" "" 21
+
+          # ARM64
+          build_arch "arm64-v8a" "aarch64" "armv8-a" "aarch64-linux-android21-" "android-libs/arm64-v8a" \
+            "" "" "" 21
+
+          # x86
+          build_arch "x86" "x86" "i686" "i686-linux-android21-" "android-libs/x86" \
+            "" "" "--disable-asm" 21
+
+          # x86_64
+          build_arch "x86_64" "x86_64" "x86-64" "x86_64-linux-android21-" "android-libs/x86_64" \
+            "" "" "--disable-asm" 21
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ffmpeg-android-libs
+          path: ffmpeg/android-libs/
