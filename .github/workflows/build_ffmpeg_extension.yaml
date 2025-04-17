@@ -9,9 +9,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        abi: [armeabi-v7a, arm64-v8a, x86, x86_64]
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -27,88 +24,172 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential autoconf automake libtool pkg-config
+        sudo apt-get install -y build-essential autoconf automake libtool pkg-config nasm
 
-    - name: Configure and build FFmpeg
+    - name: Build armeabi-v7a
       run: |
-        # Set common options
-        COMMON_OPTIONS="
-          --target-os=android
-          --enable-static
-          --disable-shared
-          --disable-doc
-          --disable-programs
-          --disable-everything
-          --disable-avdevice
-          --enable-avformat
-          --enable-swscale
-          --disable-postproc
-          --disable-avfilter
-          --disable-symver
-          --enable-swresample
-          --disable-v4l2-m2m
-          --disable-vulkan
-          --enable-decoder=aac
-          --enable-decoder=mp3
-          --enable-decoder=h264
-          --enable-decoder=hevc
-          --enable-decoder=vp8
-          --enable-decoder=vp9
-          --enable-decoder=flac
-          --enable-decoder=opus
-          --enable-decoder=vorbis
-          "
-
-        # Set architecture-specific variables
-        case "${{ matrix.abi }}" in
-          armeabi-v7a)
-            ARCH="arm"
-            CPU="armv7-a"
-            CROSS_PREFIX="armv7a-linux-androideabi21-"
-            EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp"
-            EXTRA_LDFLAGS="-Wl,--fix-cortex-a8"
-            ;;
-          arm64-v8a)
-            ARCH="aarch64"
-            CPU="armv8-a"
-            CROSS_PREFIX="aarch64-linux-android21-"
-            EXTRA_CFLAGS=""
-            EXTRA_LDFLAGS=""
-            ;;
-          x86)
-            ARCH="x86"
-            CPU="i686"
-            CROSS_PREFIX="i686-linux-android21-"
-            EXTRA_CFLAGS=""
-            EXTRA_LDFLAGS=""
-            COMMON_OPTIONS="$COMMON_OPTIONS --disable-asm"
-            ;;
-          x86_64)
-            ARCH="x86_64"
-            CPU="x86-64"
-            CROSS_PREFIX="x86_64-linux-android21-"
-            EXTRA_CFLAGS=""
-            EXTRA_LDFLAGS=""
-            COMMON_OPTIONS="$COMMON_OPTIONS --disable-asm"
-            ;;
-        esac
-
-        # Configure FFmpeg
         cd ffmpeg
         ./configure \
-          --prefix=./output/${{ matrix.abi }} \
-          --arch=$ARCH \
-          --cpu=$CPU \
-          --cross-prefix="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/$CROSS_PREFIX" \
+          --prefix=./output/armeabi-v7a \
+          --target-os=android \
+          --arch=arm \
+          --cpu=armv7-a \
+          --enable-static \
+          --disable-shared \
+          --cross-prefix="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-" \
           --nm="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
           --ar="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
           --ranlib="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" \
           --strip="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
-          --extra-cflags="$EXTRA_CFLAGS" \
-          --extra-ldflags="$EXTRA_LDFLAGS" \
-          $COMMON_OPTIONS
+          --extra-cflags="-march=armv7-a -mfloat-abi=softfp" \
+          --extra-ldflags="-Wl,--fix-cortex-a8" \
+          --disable-doc \
+          --disable-programs \
+          --disable-everything \
+          --disable-avdevice \
+          --enable-avformat \
+          --enable-swscale \
+          --disable-postproc \
+          --disable-avfilter \
+          --disable-symver \
+          --enable-swresample \
+          --disable-v4l2-m2m \
+          --disable-vulkan \
+          --enable-decoder=aac \
+          --enable-decoder=mp3 \
+          --enable-decoder=h264 \
+          --enable-decoder=hevc \
+          --enable-decoder=vp8 \
+          --enable-decoder=vp9 \
+          --enable-decoder=flac \
+          --enable-decoder=opus \
+          --enable-decoder=vorbis
 
-        # Build and install
+        make -j$(nproc)
+        make install
+        make clean
+
+    - name: Build arm64-v8a
+      run: |
+        cd ffmpeg
+        ./configure \
+          --prefix=./output/arm64-v8a \
+          --target-os=android \
+          --arch=aarch64 \
+          --cpu=armv8-a \
+          --enable-static \
+          --disable-shared \
+          --cross-prefix="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-" \
+          --nm="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
+          --ar="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+          --ranlib="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" \
+          --strip="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+          --disable-doc \
+          --disable-programs \
+          --disable-everything \
+          --disable-avdevice \
+          --enable-avformat \
+          --enable-swscale \
+          --disable-postproc \
+          --disable-avfilter \
+          --disable-symver \
+          --enable-swresample \
+          --disable-v4l2-m2m \
+          --disable-vulkan \
+          --enable-decoder=aac \
+          --enable-decoder=mp3 \
+          --enable-decoder=h264 \
+          --enable-decoder=hevc \
+          --enable-decoder=vp8 \
+          --enable-decoder=vp9 \
+          --enable-decoder=flac \
+          --enable-decoder=opus \
+          --enable-decoder=vorbis
+
+        make -j$(nproc)
+        make install
+        make clean
+
+    - name: Build x86
+      run: |
+        cd ffmpeg
+        ./configure \
+          --prefix=./output/x86 \
+          --target-os=android \
+          --arch=x86 \
+          --cpu=i686 \
+          --enable-static \
+          --disable-shared \
+          --cross-prefix="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-" \
+          --nm="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
+          --ar="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+          --ranlib="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" \
+          --strip="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+          --disable-asm \
+          --disable-doc \
+          --disable-programs \
+          --disable-everything \
+          --disable-avdevice \
+          --enable-avformat \
+          --enable-swscale \
+          --disable-postproc \
+          --disable-avfilter \
+          --disable-symver \
+          --enable-swresample \
+          --disable-v4l2-m2m \
+          --disable-vulkan \
+          --enable-decoder=aac \
+          --enable-decoder=mp3 \
+          --enable-decoder=h264 \
+          --enable-decoder=hevc \
+          --enable-decoder=vp8 \
+          --enable-decoder=vp9 \
+          --enable-decoder=flac \
+          --enable-decoder=opus \
+          --enable-decoder=vorbis
+
+        make -j$(nproc)
+        make install
+        make clean
+
+    - name: Build x86_64
+      run: |
+        cd ffmpeg
+        ./configure \
+          --prefix=./output/x86_64 \
+          --target-os=android \
+          --arch=x86_64 \
+          --cpu=x86-64 \
+          --enable-static \
+          --disable-shared \
+          --cross-prefix="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-" \
+          --nm="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
+          --ar="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+          --ranlib="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" \
+          --strip="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+          --disable-asm \
+          --disable-doc \
+          --disable-programs \
+          --disable-everything \
+          --disable-avdevice \
+          --enable-avformat \
+          --enable-swscale \
+          --disable-postproc \
+          --disable-avfilter \
+          --disable-symver \
+          --enable-swresample \
+          --disable-v4l2-m2m \
+          --disable-vulkan \
+          --enable-decoder=aac \
+          --enable-decoder=mp3 \
+          --enable-decoder=h264 \
+          --enable-decoder=hevc \
+          --enable-decoder=vp8 \
+          --enable-decoder=vp9 \
+          --enable-decoder=flac \
+          --enable-decoder=opus \
+          --enable-decoder=vorbis
+
         make -j$(nproc)
         make install
         make clean
@@ -116,11 +197,11 @@ jobs:
     - name: Package artifacts
       run: |
         mkdir -p artifacts
-        cd ffmpeg/output/${{ matrix.abi }}
-        tar -czvf ../../../artifacts/ffmpeg-${{ matrix.abi }}.tar.gz include lib
+        cd ffmpeg/output
+        tar -czvf ../../artifacts/ffmpeg-android-libs.tar.gz *
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ffmpeg-${{ matrix.abi }}
-        path: artifacts/ffmpeg-${{ matrix.abi }}.tar.gz
+        name: ffmpeg-android-libs
+        path: artifacts/ffmpeg-android-libs.tar.gz
