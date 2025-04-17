@@ -1,0 +1,66 @@
+name: Build FFmpeg and libyuv for Android
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      ANDROID_ABI: 21
+      HOST_PLATFORM: linux-x86_64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake yasm pkg-config
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25c
+
+      - name: Set environment variables
+        run: |
+          echo "NDK_PATH=${ANDROID_NDK_HOME}" >> $GITHUB_ENV
+          echo "FFMPEG_MODULE_PATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+
+      - name: Download FFmpeg source
+        run: |
+          git clone https://git.ffmpeg.org/ffmpeg.git ${GITHUB_WORKSPACE}/jni/ffmpeg
+          cd ${GITHUB_WORKSPACE}/jni/ffmpeg
+          git checkout release/5.1  # or another version as needed
+
+      - name: Download libyuv source
+        run: |
+          mkdir -p ${GITHUB_WORKSPACE}/jni
+          git clone https://chromium.googlesource.com/libyuv/libyuv ${GITHUB_WORKSPACE}/jni/libyuv
+          cd ${GITHUB_WORKSPACE}/jni/libyuv
+          git checkout main
+
+      - name: Make build scripts executable
+        run: |
+          chmod +x ${GITHUB_WORKSPACE}/build_ffmpeg.sh
+          chmod +x ${GITHUB_WORKSPACE}/build_libyuv.sh
+
+      - name: Build FFmpeg
+        run: |
+          bash ${GITHUB_WORKSPACE}/build_ffmpeg.sh "$FFMPEG_MODULE_PATH" "$NDK_PATH" "$HOST_PLATFORM" "$ANDROID_ABI" aac h264 hevc
+
+      - name: Build libyuv
+        run: |
+          bash ${GITHUB_WORKSPACE}/build_libyuv.sh "$FFMPEG_MODULE_PATH" "$NDK_PATH" "$ANDROID_ABI"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-libs
+          path: android-libs/
