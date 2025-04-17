@@ -21,8 +21,9 @@ jobs:
       run: |
         mkdir -p ndk
         curl -L https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION }}-linux.zip -o ndk.zip
-        unzip -q ndk.zip -d ndk
-        mv ndk/android-ndk-${{ env.NDK_VERSION }} ndk
+        unzip -q ndk.zip -d ndk-tmp
+        mv ndk-tmp/android-ndk-${{ env.NDK_VERSION }}/* ndk/
+        rm -rf ndk-tmp ndk.zip
         echo "NDK_PATH=$(pwd)/ndk" >> $GITHUB_ENV
 
     - name: Install dependencies
