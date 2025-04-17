@@ -102,6 +102,7 @@ jobs:
 
             make -j$(nproc)
             make install-libs
+            make install
             make clean
           }
 
@@ -121,8 +122,14 @@ jobs:
           build_arch "x86_64" "x86_64" "x86-64" "x86_64-linux-android21-" "android-libs/x86_64" \
             "" "" "--disable-asm" 21
 
-      - name: Upload Artifacts
+      - name: Upload FFmpeg .so Libraries
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-android-libs
-          path: ffmpeg/android-libs/
+          path: ffmpeg/android-libs/**/lib/
+
+      - name: Upload FFmpeg Headers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-headers
+          path: ffmpeg/android-libs/armeabi-v7a/include/
