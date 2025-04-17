@@ -1,174 +1,126 @@
-name: Build Static FFmpeg & libyuv for Android
+name: Build FFmpeg for Android
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    env:
-      ANDROID_ABI_LEVEL: 21
-      HOST_PLATFORM: linux-x86_64
-      FFMPEG_VERSION: 6.1.1
-      ENABLED_DECODERS: "aac h264 hevc"
-      ABI_LIST: "armeabi-v7a arm64-v8a x86 x86_64"
-
+    strategy:
+      matrix:
+        abi: [armeabi-v7a, arm64-v8a, x86, x86_64]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake yasm pkg-config curl tar build-essential
+    - name: Set up NDK
+      run: |
+        mkdir -p android-ndk
+        curl -L https://dl.google.com/android/repository/android-ndk-r25c-linux.zip -o ndk.zip
+        unzip -q ndk.zip -d android-ndk
+        rm ndk.zip
+        echo "NDK_PATH=$(pwd)/android-ndk/android-ndk-r25c" >> $GITHUB_ENV
 
-      - name: Set up Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r25c
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential autoconf automake libtool pkg-config
 
-      - name: Download FFmpeg 6.1.1
-        run: |
-          mkdir -p jni/ffmpeg
-          cd jni/ffmpeg
-          curl -L https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -o ffmpeg.tar.bz2
-          tar -xjf ffmpeg.tar.bz2 --strip-components=1
+    - name: Configure and build FFmpeg
+      run: |
+        # Set common options
+        COMMON_OPTIONS="
+          --target-os=android
+          --enable-static
+          --disable-shared
+          --disable-doc
+          --disable-programs
+          --disable-everything
+          --disable-avdevice
+          --enable-avformat
+          --enable-swscale
+          --disable-postproc
+          --disable-avfilter
+          --disable-symver
+          --enable-swresample
+          --disable-v4l2-m2m
+          --disable-vulkan
+          --enable-decoder=aac
+          --enable-decoder=mp3
+          --enable-decoder=h264
+          --enable-decoder=hevc
+          --enable-decoder=vp8
+          --enable-decoder=vp9
+          --enable-decoder=flac
+          --enable-decoder=opus
+          --enable-decoder=vorbis
+          "
 
-      - name: Download libyuv
-        run: |
-          mkdir -p jni
-          git clone https://chromium.googlesource.com/libyuv/libyuv jni/libyuv
+        # Set architecture-specific variables
+        case "${{ matrix.abi }}" in
+          armeabi-v7a)
+            ARCH="arm"
+            CPU="armv7-a"
+            CROSS_PREFIX="armv7a-linux-androideabi21-"
+            EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp"
+            EXTRA_LDFLAGS="-Wl,--fix-cortex-a8"
+            ;;
+          arm64-v8a)
+            ARCH="aarch64"
+            CPU="armv8-a"
+            CROSS_PREFIX="aarch64-linux-android21-"
+            EXTRA_CFLAGS=""
+            EXTRA_LDFLAGS=""
+            ;;
+          x86)
+            ARCH="x86"
+            CPU="i686"
+            CROSS_PREFIX="i686-linux-android21-"
+            EXTRA_CFLAGS=""
+            EXTRA_LDFLAGS=""
+            COMMON_OPTIONS="$COMMON_OPTIONS --disable-asm"
+            ;;
+          x86_64)
+            ARCH="x86_64"
+            CPU="x86-64"
+            CROSS_PREFIX="x86_64-linux-android21-"
+            EXTRA_CFLAGS=""
+            EXTRA_LDFLAGS=""
+            COMMON_OPTIONS="$COMMON_OPTIONS --disable-asm"
+            ;;
+        esac
 
-      - name: Build FFmpeg for all ABIs
-        run: |
-          set -eux
-          NDK_PATH=$ANDROID_NDK_HOME
-          TOOLCHAIN=${NDK_PATH}/toolchains/llvm/prebuilt/${HOST_PLATFORM}/bin
-          cd jni/ffmpeg
+        # Configure FFmpeg
+        cd ffmpeg
+        ./configure \
+          --prefix=./output/${{ matrix.abi }} \
+          --arch=$ARCH \
+          --cpu=$CPU \
+          --cross-prefix="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/$CROSS_PREFIX" \
+          --nm="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
+          --ar="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+          --ranlib="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" \
+          --strip="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+          --extra-cflags="$EXTRA_CFLAGS" \
+          --extra-ldflags="$EXTRA_LDFLAGS" \
+          $COMMON_OPTIONS
 
-          for ABI in $ABI_LIST; do
-            case $ABI in
-              armeabi-v7a)
-                ARCH=arm
-                CPU=armv7-a
-                TARGET=armv7a-linux-androideabi
-                API=$ANDROID_ABI_LEVEL
-                EXTRA_CFLAGS="-march=armv7-a -mfloat-abi=softfp"
-                EXTRA_LDFLAGS="-Wl,--fix-cortex-a8"
-                ;;
-              arm64-v8a)
-                ARCH=aarch64
-                CPU=armv8-a
-                TARGET=aarch64-linux-android
-                API=$ANDROID_ABI_LEVEL
-                EXTRA_CFLAGS=""
-                EXTRA_LDFLAGS=""
-                ;;
-              x86)
-                ARCH=x86
-                CPU=i686
-                TARGET=i686-linux-android
-                API=$ANDROID_ABI_LEVEL
-                EXTRA_CFLAGS=""
-                EXTRA_LDFLAGS=""
-                ;;
-              x86_64)
-                ARCH=x86_64
-                CPU=x86-64
-                TARGET=x86_64-linux-android
-                API=$ANDROID_ABI_LEVEL
-                EXTRA_CFLAGS=""
-                EXTRA_LDFLAGS=""
-                ;;
-            esac
+        # Build and install
+        make -j$(nproc)
+        make install
+        make clean
 
-            OUTPUT_DIR=$PWD/android-libs/$ABI
-            mkdir -p $OUTPUT_DIR/lib $OUTPUT_DIR/include
+    - name: Package artifacts
+      run: |
+        mkdir -p artifacts
+        cd ffmpeg/output/${{ matrix.abi }}
+        tar -czvf ../../../artifacts/ffmpeg-${{ matrix.abi }}.tar.gz include lib
 
-            ./configure \
-              --prefix=$OUTPUT_DIR \
-              --target-os=android \
-              --arch=$ARCH \
-              --cpu=$CPU \
-              --cross-prefix=${TOOLCHAIN}/${TARGET}${API}- \
-              --cc=${TOOLCHAIN}/${TARGET}${API}-clang \
-              --nm=${TOOLCHAIN}/llvm-nm \
-              --ar=${TOOLCHAIN}/llvm-ar \
-              --ranlib=${TOOLCHAIN}/llvm-ranlib \
-              --strip=${TOOLCHAIN}/llvm-strip \
-              --enable-cross-compile \
-              --enable-static \
-              --disable-shared \
-              --disable-doc \
-              --disable-programs \
-              --disable-everything \
-              --disable-autodetect \
-              --disable-vulkan \
-              --disable-hwaccels \
-              --disable-vaapi \
-              --disable-vdpau \
-              --disable-libv4l2 \
-              --disable-v4l2-m2m \
-              --disable-v4l2-request \
-              --disable-libdrm \
-              --disable-libvulkan \
-              --enable-avformat \
-              --enable-swresample \
-              --enable-swscale \
-              --disable-avdevice \
-              --disable-postproc \
-              --disable-avfilter \
-              --disable-symver \
-              $(for dec in $ENABLED_DECODERS; do echo "--enable-decoder=$dec"; done) \
-              --extra-cflags="$EXTRA_CFLAGS" \
-              --extra-ldflags="$EXTRA_LDFLAGS"
-
-            make -j$(nproc)
-            make install
-            make clean
-          done
-
-      - name: Build libyuv for all ABIs
-        run: |
-          set -eux
-          NDK_PATH=$ANDROID_NDK_HOME
-          cd jni/libyuv
-
-          for ABI in $ABI_LIST; do
-            mkdir -p build-$ABI
-            cd build-$ABI
-
-            cmake .. \
-              -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH/build/cmake/android.toolchain.cmake \
-              -DANDROID_ABI=$ABI \
-              -DANDROID_PLATFORM=android-$ANDROID_ABI_LEVEL \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DBUILD_SHARED_LIBS=OFF \
-              -DCMAKE_SYSTEM_NAME=Android \
-              -DCMAKE_ANDROID_STL_TYPE=c++_static
-
-            cmake --build . --target yuv -j$(nproc)
-
-            # Copy .a and headers
-            LIBS_DIR=../../ffmpeg/android-libs/$ABI
-            mkdir -p $LIBS_DIR/lib
-            mkdir -p $LIBS_DIR/include
-            cp libyuv.a $LIBS_DIR/lib/
-            cp -r ../include/* $LIBS_DIR/include/
-
-            cd ..
-          done
-
-      - name: Zip static libraries and headers
-        run: |
-          cd jni/ffmpeg
-          zip -r android-static-libs.zip android-libs
-
-      - name: Upload ZIP Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-static-libs
-          path: jni/ffmpeg/android-static-libs.zip
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ffmpeg-${{ matrix.abi }}
+        path: artifacts/ffmpeg-${{ matrix.abi }}.tar.gz
