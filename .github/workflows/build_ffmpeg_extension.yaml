@@ -85,8 +85,8 @@ jobs:
             export PATH=$TOOLCHAIN:$PATH
 
             ./configure \
-              --libdir=android-libs/${ABI} \
-              --prefix=android-libs/${ABI} \
+              --libdir=${LIBDIR} \
+              --prefix=${LIBDIR} \
               --arch=${ARCH} \
               --cpu=${CPU} \
               --cross-prefix="${TOOLCHAIN}/${CROSS_PREFIX}" \
