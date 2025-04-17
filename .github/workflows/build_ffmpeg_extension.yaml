@@ -7,7 +7,8 @@ on:
     branches: [ main ]
 
 env:
-  FFMPEG_VERSION: "6.0"  # Latest stable version
+  FFMPEG_VERSION: "6.0"
+  NDK_VERSION: "r25c"
 
 jobs:
   build:
@@ -19,9 +20,9 @@ jobs:
     - name: Set up NDK
       run: |
         mkdir -p ndk
-        curl -L https://dl.google.com/android/repository/android-ndk-r25c-linux.zip -o ndk.zip
+        curl -L https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION }}-linux.zip -o ndk.zip
         unzip -q ndk.zip -d ndk
-        mv ndk/*/* ndk/
+        mv ndk/android-ndk-${{ env.NDK_VERSION }} ndk
         echo "NDK_PATH=$(pwd)/ndk" >> $GITHUB_ENV
 
     - name: Install dependencies
@@ -55,29 +56,31 @@ jobs:
           --enable-avformat
           --enable-swresample
           --enable-swscale
-          --enable-decoder=aac
-          --enable-decoder=mp3
-          --enable-decoder=h264
-          --enable-decoder=hevc
-          --enable-decoder=vp8
-          --enable-decoder=vp9
-          --enable-decoder=flac
-          --enable-decoder=opus
-          --enable-decoder=vorbis
+          --enable-decoder=aac,mp3,h264,hevc,vp8,vp9,flac,opus,vorbis
         "
 
         build_abi() {
+          local abi=$1
+          local arch=$2
+          local cpu=$3
+          local prefix=$4
+          local cflags=$5
+          local ldflags=$6
+          local extra_flags=$7
+
           ./configure \
-            --prefix=./output/$1 \
+            --prefix=./output/$abi \
             --target-os=android \
-            --arch=$2 \
-            --cpu=$3 \
-            --cross-prefix="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/$4-" \
+            --arch=$arch \
+            --cpu=$cpu \
+            --cross-prefix="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/$prefix" \
             --nm="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" \
             --ar="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
-            --extra-cflags="$5" \
-            --extra-ldflags="$6" \
-            $COMMON_FLAGS $7
+            --ranlib="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" \
+            --strip="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+            --extra-cflags="$cflags" \
+            --extra-ldflags="$ldflags" \
+            $COMMON_FLAGS $extra_flags
 
           make -j$(nproc)
           make install
@@ -85,16 +88,16 @@ jobs:
         }
 
         # Build each ABI
-        build_abi "armeabi-v7a" "arm" "armv7-a" "armv7a-linux-androideabi21" \
+        build_abi "armeabi-v7a" "arm" "armv7-a" "armv7a-linux-androideabi21-clang" \
           "-march=armv7-a -mfloat-abi=softfp" "-Wl,--fix-cortex-a8" ""
 
-        build_abi "arm64-v8a" "aarch64" "armv8-a" "aarch64-linux-android21" \
+        build_abi "arm64-v8a" "aarch64" "armv8-a" "aarch64-linux-android21-clang" \
           "" "" ""
 
-        build_abi "x86" "x86" "i686" "i686-linux-android21" \
+        build_abi "x86" "x86" "i686" "i686-linux-android21-clang" \
           "" "" "--disable-asm"
 
-        build_abi "x86_64" "x86_64" "x86-64" "x86_64-linux-android21" \
+        build_abi "x86_64" "x86_64" "x86-64" "x86_64-linux-android21-clang" \
           "" "" "--disable-asm"
 
     - name: Package artifacts
