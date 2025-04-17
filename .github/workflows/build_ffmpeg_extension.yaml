@@ -30,7 +30,7 @@ jobs:
         with:
           ndk-version: r25c
 
-      - name: Download FFmpeg
+      - name: Download FFmpeg 6.1.1
         run: |
           mkdir -p jni/ffmpeg
           cd jni/ffmpeg
@@ -105,6 +105,16 @@ jobs:
               --disable-doc \
               --disable-programs \
               --disable-everything \
+              --disable-autodetect \
+              --disable-vulkan \
+              --disable-hwaccels \
+              --disable-vaapi \
+              --disable-vdpau \
+              --disable-libv4l2 \
+              --disable-v4l2-m2m \
+              --disable-v4l2-request \
+              --disable-libdrm \
+              --disable-libvulkan \
               --enable-avformat \
               --enable-swresample \
               --enable-swscale \
@@ -112,14 +122,6 @@ jobs:
               --disable-postproc \
               --disable-avfilter \
               --disable-symver \
-              --disable-vulkan \
-              --disable-hwaccels \
-              --disable-hwaccel=vulkan \
-              --disable-decoder=h264_v4l2m2m \
-              --disable-encoder=h264_v4l2m2m \
-              --disable-vaapi \
-              --disable-vdpau \
-              --disable-libv4l2 \
               $(for dec in $ENABLED_DECODERS; do echo "--enable-decoder=$dec"; done) \
               --extra-cflags="$EXTRA_CFLAGS" \
               --extra-ldflags="$EXTRA_LDFLAGS"
@@ -160,8 +162,13 @@ jobs:
             cd ..
           done
 
-      - name: Upload Static Artifacts (includes .a and headers)
+      - name: Zip static libraries and headers
+        run: |
+          cd jni/ffmpeg
+          zip -r android-static-libs.zip android-libs
+
+      - name: Upload ZIP Artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-static-libs
-          path: jni/ffmpeg/android-libs/
+          path: jni/ffmpeg/android-static-libs.zip
