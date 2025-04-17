@@ -1,0 +1,59 @@
+name: Build FFmpeg Extension for Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v2
+      
+    - name: Download NDK
+      run: |
+        SDKMANAGER=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
+        $SDKMANAGER --install "ndk;25.2.9519653"
+        echo "NDK_PATH=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
+        
+    - name: Make script executable
+      run: chmod +x build_ffmpeg.sh
+      
+    - name: Run FFmpeg build script
+      run: |
+        # Define the decoders you want to enable
+        ENABLED_DECODERS=(
+          "mpeg4" "h263" "h264" "hevc" "vp8" "vp9" 
+          "aac" "mp3" "ac3" "eac3" "flac" "vorbis"
+          "wmv1" "wmv2" "wmv3" "mpeg1video" "mpeg2video"
+          "msmpeg4v1" "msmpeg4v2" "msmpeg4v3" "flv"
+        )
+        
+        ./build_ffmpeg.sh \
+          "$GITHUB_WORKSPACE" \
+          "$NDK_PATH" \
+          "linux-x86_64" \
+          "21" \
+          "${ENABLED_DECODERS[@]}"
+          
+    - name: Archive built libraries
+      uses: actions/upload-artifact@v3
+      with:
+        name: ffmpeg-libraries
+        path: |
+          */jni/ffmpeg/android-libs/armeabi-v7a/*.so
+          */jni/ffmpeg/android-libs/arm64-v8a/*.so
+          */jni/ffmpeg/android-libs/x86/*.so
+          */jni/ffmpeg/android-libs/x86_64/*.so
